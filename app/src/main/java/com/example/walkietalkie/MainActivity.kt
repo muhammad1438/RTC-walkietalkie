@@ -5,10 +5,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -59,7 +56,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        unregisterReceiver(discoveryReceiver)
         bluetoothController.stop()
         audioHandler.release()
     }
@@ -111,10 +107,16 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 chatAdapter.addMessage("Friend: $text")
             }
+        }, { device ->
+            if (!discoveredDevices.contains(device)) {
+                discoveredDevices.add(device)
+                deviceListAdapter.notifyDataSetChanged()
+            }
         })
 
         // Setup RecyclerViews
         deviceListAdapter = DeviceListAdapter(discoveredDevices) { device ->
+            bluetoothController.stopBleScan()
             bluetoothController.connectToServer(device, lifecycleScope)
         }
         devicesRecyclerView.adapter = deviceListAdapter
@@ -127,10 +129,6 @@ class MainActivity : AppCompatActivity() {
 
         // Start listening for connections immediately
         bluetoothController.startServer(lifecycleScope)
-
-        // Register broadcast receiver for device discovery
-        val filter = IntentFilter(BluetoothDevice.ACTION_FOUND)
-        registerReceiver(discoveryReceiver, filter)
     }
 
     // --- UI Setup & Listeners ---
@@ -147,7 +145,7 @@ class MainActivity : AppCompatActivity() {
         scanButton.setOnClickListener {
             discoveredDevices.clear()
             deviceListAdapter.notifyDataSetChanged()
-            bluetoothAdapter?.startDiscovery()
+            bluetoothController.startBleScan()
             updateStatus("Status: Scanning...")
         }
 
@@ -191,20 +189,6 @@ class MainActivity : AppCompatActivity() {
             scanButton.visibility = View.VISIBLE
             devicesRecyclerView.visibility = View.VISIBLE
             chatRecyclerView.visibility = View.GONE
-        }
-    }
-
-    // --- Bluetooth Discovery ---
-
-    private val discoveryReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (BluetoothDevice.ACTION_FOUND == intent.action) {
-                val device: BluetoothDevice? = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                if (device != null && device.name != null && !discoveredDevices.contains(device)) {
-                    discoveredDevices.add(device)
-                    deviceListAdapter.notifyItemInserted(discoveredDevices.size - 1)
-                }
-            }
         }
     }
 }

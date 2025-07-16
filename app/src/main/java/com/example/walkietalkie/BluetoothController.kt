@@ -5,6 +5,12 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.bluetooth.le.BluetoothLeScanner
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
+import android.os.ParcelUuid
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,7 +27,8 @@ class BluetoothController(
     private val adapter: BluetoothAdapter,
     private val onStateChanged: (String) -> Unit,
     private val onAudioDataReceived: (ByteArray) -> Unit,
-    private val onTextDataReceived: (String) -> Unit
+    private val onTextDataReceived: (String) -> Unit,
+    private val onDeviceFound: (BluetoothDevice) -> Unit
 ) {
     private val appName = "WalkieTalkie"
     private val appUuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") // Standard SerialPortService ID
@@ -30,6 +37,9 @@ class BluetoothController(
     private var clientJob: Job? = null
     private var streamJob: Job? = null
     private var socket: BluetoothSocket? = null
+
+    private val bleScanner: BluetoothLeScanner? = adapter.bluetoothLeScanner
+    private var scanCallback: ScanCallback? = null
 
     object MessageType {
         const val AUDIO_CHUNK: Byte = 0x01
@@ -104,6 +114,46 @@ class BluetoothController(
             }
         }
     }
+
+    fun startBleScan() {
+        if (scanCallback != null) {
+            return // Scan already in progress
+        }
+        val scanFilter = ScanFilter.Builder()
+            .setServiceUuid(ParcelUuid(appUuid))
+            .build()
+        val scanSettings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+
+        scanCallback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult?) {
+                result?.device?.let { onDeviceFound(it) }
+            }
+        }
+        bleScanner?.startScan(listOf(scanFilter), scanSettings, scanCallback)
+    }
+
+    fun stopBleScan() {
+        bleScanner?.stopScan(scanCallback)
+        scanCallback = null
+    }
+
+    // Placeholder for secure pairing
+    fun securePair(device: BluetoothDevice) {
+        // TODO: Implement secure pairing logic
+    }
+
+    // Placeholder for mesh networking
+    fun forwardMessage(message: ByteArray) {
+        // TODO: Implement mesh networking logic
+    }
+
+    // Placeholder for connection management
+    fun prioritizeConnection(device: BluetoothDevice) {
+        // TODO: Implement connection prioritization logic
+    }
+
 
     fun stop() {
         try {
