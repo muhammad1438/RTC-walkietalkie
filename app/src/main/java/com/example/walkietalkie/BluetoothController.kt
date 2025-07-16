@@ -1,141 +1,103 @@
 package com.example.walkietalkie
 
-import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.content.pm.PackageManager
-import androidx.core.app.ActivityCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.IOException
-import java.util.*
+import java.util.UUID
 
-private const val NAME = "WalkieTalkie"
-private val MY_UUID: UUID = UUID.fromString("8ce255c0-200a-11e0-ac64-0800200c9a66")
-
-data class Device(val name: String, val address: String)
-
+@SuppressLint("MissingPermission") // Permissions are checked in MainActivity
 class BluetoothController(
-    private val context: Context,
-    private val coroutineScope: CoroutineScope
+    private val adapter: BluetoothAdapter,
+    private val onStateChanged: (String) -> Unit,
+    private val onDataReceived: (ByteArray) -> Unit
 ) {
+    private val appName = "WalkieTalkie"
+    private val appUuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") // Standard SerialPortService ID
 
-    private val bluetoothManager = context.getSystemService(Context.BLUETOETOOTH_SERVICE) as BluetoothManager
-    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
+    private var serverJob: Job? = null
+    private var clientJob: Job? = null
+    private var streamJob: Job? = null
 
-    private var serverSocket: BluetoothServerSocket? = null
-    private var clientSocket: BluetoothSocket? = null
+    private var socket: BluetoothSocket? = null
 
-    var onDeviceFound: ((Device) -> Unit)? = null
-    var onStateChanged: ((String) -> Unit)? = null
-    var onConnected: ((BluetoothSocket) -> Unit)? = null
+    fun startServer(scope: CoroutineScope) {
+        onStateChanged("Status: Starting server...")
+        serverJob = scope.launch(Dispatchers.IO) {
+            val serverSocket: BluetoothServerSocket? = adapter.listenUsingRfcommWithServiceRecord(appName, appUuid)
+            try {
+                withContext(Dispatchers.Main) { onStateChanged("Status: Waiting for connection...") }
+                val clientSocket = serverSocket?.accept()
+                serverSocket?.close()
+                manageConnection(clientSocket, scope)
+            } catch (e: IOException) {
+                withContext(Dispatchers.Main) { onStateChanged("Status: Server failed.") }
+            }
+        }
+    }
 
-    private val receiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            when (intent.action) {
-                BluetoothDevice.ACTION_FOUND -> {
-                    val device: BluetoothDevice? = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                    device?.let {
-                        if (ActivityCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.BLUETOOTH_CONNECT
-                            ) != PackageManager.PERMISSION_GRANTED
-                        ) {
-                            return
-                        }
-                        onDeviceFound?.invoke(Device(it.name ?: "Unknown", it.address))
+    fun connectToServer(device: BluetoothDevice, scope: CoroutineScope) {
+        onStateChanged("Status: Connecting to ${device.name}...")
+        clientJob = scope.launch(Dispatchers.IO) {
+            try {
+                val clientSocket = device.createRfcommSocketToServiceRecord(appUuid)
+                clientSocket.connect()
+                manageConnection(clientSocket, scope)
+            } catch (e: IOException) {
+                withContext(Dispatchers.Main) { onStateChanged("Status: Connection failed.") }
+            }
+        }
+    }
+
+    private suspend fun manageConnection(btSocket: BluetoothSocket?, scope: CoroutineScope) {
+        this.socket = btSocket
+        withContext(Dispatchers.Main) { onStateChanged("Status: Connected") }
+
+        streamJob = scope.launch(Dispatchers.IO) {
+            val inputStream = socket?.inputStream
+            val buffer = ByteArray(1024)
+            while (isActive) {
+                try {
+                    val bytes = inputStream?.read(buffer) ?: 0
+                    if (bytes > 0) {
+                        onDataReceived(buffer.copyOf(bytes))
                     }
+                } catch (e: IOException) {
+                    withContext(Dispatchers.Main) { onStateChanged("Status: Disconnected") }
+                    break
                 }
             }
         }
     }
 
-    fun startDiscovery() {
-        if (ActivityCompat.checkSelfPermission(
-                context,
-                Manifest.permission.BLUETOOTH_SCAN
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
-        val filter = IntentFilter(BluetoothDevice.ACTION_FOUND)
-        context.registerReceiver(receiver, filter)
-        bluetoothAdapter?.startDiscovery()
-    }
-
-    fun stopDiscovery() {
-        if (ActivityCompat.checkSelfPermission(
-                context,
-                Manifest.permission.BLUETOOTH_SCAN
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
-        bluetoothAdapter?.cancelDiscovery()
-        context.unregisterReceiver(receiver)
-    }
-
-    fun startServer() {
-        onStateChanged?.invoke("Listening for connections...")
-        coroutineScope.launch(Dispatchers.IO) {
+    fun sendData(data: ByteArray, scope: CoroutineScope) {
+        scope.launch(Dispatchers.IO) {
             try {
-                if (ActivityCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.BLUETOOTH_CONNECT
-                    ) != PackageManager.PERMISSION_GRANTED
-                ) {
-                    return@launch
-                }
-                serverSocket = bluetoothAdapter?.listenUsingRfcommWithServiceRecord(NAME, MY_UUID)
-                val socket = serverSocket?.accept()
-                socket?.let {
-                    clientSocket = it
-                    onStateChanged?.invoke("Connected")
-                    onConnected?.invoke(it)
-                    serverSocket?.close()
-                }
+                socket?.outputStream?.write(data)
             } catch (e: IOException) {
-                onStateChanged?.invoke("Could not start server")
+                 withContext(Dispatchers.Main) { onStateChanged("Status: Send failed.") }
             }
         }
     }
 
-    fun connectToServer(address: String) {
-        onStateChanged?.invoke("Connecting...")
-        coroutineScope.launch(Dispatchers.IO) {
-            try {
-                if (ActivityCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.BLUETOOTH_CONNECT
-                    ) != PackageManager.PERMISSION_GRANTED
-                ) {
-                    return@launch
-                }
-                val device = bluetoothAdapter?.getRemoteDevice(address)
-                clientSocket = device?.createRfcommSocketToServiceRecord(MY_UUID)
-                clientSocket?.connect()
-                onStateChanged?.invoke("Connected")
-                clientSocket?.let { onConnected?.invoke(it) }
-            } catch (e: IOException) {
-                onStateChanged?.invoke("Connection failed")
-            }
-        }
-    }
-
-    fun close() {
+    fun stop() {
         try {
-            serverSocket?.close()
-            clientSocket?.close()
+            serverJob?.cancel()
+            clientJob?.cancel()
+            streamJob?.cancel()
+            socket?.close()
+            socket = null
+            onStateChanged("Status: Disconnected")
         } catch (e: IOException) {
-            e.printStackTrace()
+            // Log error
         }
     }
 }

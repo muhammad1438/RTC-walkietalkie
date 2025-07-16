@@ -1,109 +1,79 @@
 package com.example.walkietalkie
 
-import android.Manifest
-import android.content.Context
-import android.content.pm.PackageManager
+import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
-import android.media.MediaRecorder
-import androidx.core.app.ActivityCompat
+import android.media.MediaRecorder.AudioSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-private const val SAMPLE_RATE = 44100
-private const val CHANNEL_CONFIG_IN = AudioFormat.CHANNEL_IN_MONO
-private const val CHANNEL_CONFIG_OUT = AudioFormat.CHANNEL_OUT_MONO
-private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-
+@SuppressLint("MissingPermission") // Permissions are checked in MainActivity
 class AudioHandler(
-    private val context: Context,
-    private val coroutineScope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val onDataReady: (ByteArray) -> Unit
 ) {
+    private val sampleRate = 44100
+    private val channelConfigRecord = AudioFormat.CHANNEL_IN_MONO
+    private val channelConfigPlay = AudioFormat.CHANNEL_OUT_MONO
+    private val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+    private val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfigRecord, audioFormat)
 
-    private var recorder: AudioRecord? = null
-    private var tracker: AudioTrack? = null
+    private var audioRecord: AudioRecord? = null
+    private var audioTrack: AudioTrack? = null
 
-    private var recordingJob: Job? = null
-    private var playingJob: Job? = null
+    var isRecording = false
+    var isPlaying = false
 
-
-    fun startRecording(outputStream: java.io.OutputStream) {
-        if (ActivityCompat.checkSelfPermission(
-                context,
-                Manifest.permission.RECORD_AUDIO
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
-        val bufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG_IN, AUDIO_FORMAT)
-        recorder = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            SAMPLE_RATE,
-            CHANNEL_CONFIG_IN,
-            AUDIO_FORMAT,
-            bufferSize
-        )
-
-        recorder?.startRecording()
-
-        recordingJob = coroutineScope.launch(Dispatchers.IO) {
+    fun startRecording() {
+        if (isRecording) return
+        isRecording = true
+        audioRecord = AudioRecord(AudioSource.MIC, sampleRate, channelConfigRecord, audioFormat, bufferSize)
+        audioRecord?.startRecording()
+        scope.launch(Dispatchers.IO) {
             val buffer = ByteArray(bufferSize)
-            while (true) {
-                val read = recorder?.read(buffer, 0, buffer.size) ?: 0
+            while (isActive && isRecording) {
+                val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                 if (read > 0) {
-                    try {
-                        outputStream.write(buffer, 0, read)
-                    } catch (e: java.io.IOException) {
-                        break
-                    }
+                    onDataReady(buffer.copyOf(read))
                 }
             }
         }
     }
 
     fun stopRecording() {
-        recordingJob?.cancel()
-        recorder?.stop()
-        recorder?.release()
-        recorder = null
+        if (!isRecording) return
+        isRecording = false
+        audioRecord?.stop()
+        audioRecord?.release()
+        audioRecord = null
     }
 
-    fun startPlaying(inputStream: java.io.InputStream) {
-        val bufferSize = AudioTrack.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG_OUT, AUDIO_FORMAT)
-        tracker = AudioTrack(
-            AudioManager.STREAM_MUSIC,
-            SAMPLE_RATE,
-            CHANNEL_CONFIG_OUT,
-            AUDIO_FORMAT,
-            bufferSize,
-            AudioTrack.MODE_STREAM
-        )
-
-        tracker?.play()
-
-        playingJob = coroutineScope.launch(Dispatchers.IO) {
-            val buffer = ByteArray(bufferSize)
-            while (true) {
-                try {
-                    val read = inputStream.read(buffer, 0, buffer.size)
-                    if (read > 0) {
-                        tracker?.write(buffer, 0, read)
-                    }
-                } catch (e: java.io.IOException) {
-                    break
-                }
-            }
+    fun playAudio(data: ByteArray) {
+        if (!isPlaying) {
+            startPlaying()
         }
+        audioTrack?.write(data, 0, data.size)
+    }
+
+    private fun startPlaying() {
+        isPlaying = true
+        audioTrack = AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, channelConfigPlay, audioFormat, bufferSize, AudioTrack.MODE_STREAM)
+        audioTrack?.play()
     }
 
     fun stopPlaying() {
-        playingJob?.cancel()
-        tracker?.stop()
-        tracker?.release()
-        tracker = null
+        isPlaying = false
+        audioTrack?.stop()
+        audioTrack?.release()
+        audioTrack = null
+    }
+
+    fun release() {
+        stopRecording()
+        stopPlaying()
     }
 }
