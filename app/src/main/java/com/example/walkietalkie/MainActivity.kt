@@ -15,6 +15,7 @@ import android.os.Bundle
 import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,6 +33,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var scanButton: Button
     private lateinit var pttButton: Button
     private lateinit var devicesRecyclerView: RecyclerView
+    private lateinit var chatRecyclerView: RecyclerView
+    private lateinit var messageInput: EditText
+    private lateinit var sendButton: Button
 
     // Bluetooth & Audio
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
@@ -41,6 +45,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bluetoothController: BluetoothController
     private lateinit var audioHandler: AudioHandler
     private lateinit var deviceListAdapter: DeviceListAdapter
+    private lateinit var chatAdapter: ChatAdapter
     private val discoveredDevices = mutableListOf<BluetoothDevice>()
 
     // --- Activity Lifecycle & Permissions ---
@@ -97,21 +102,28 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Init Handlers
-        // MODIFIED: The AudioHandler now calls the new `sendAudioData` method on the controller.
         audioHandler = AudioHandler(lifecycleScope) { data ->
-            bluetoothController.sendAudioData(data, lifecycleScope)
+            bluetoothController.sendMessage(BluetoothController.MessageType.AUDIO_CHUNK, data, lifecycleScope)
         }
-        // MODIFIED: The BluetoothController now passes received audio data to the AudioHandler.
-        bluetoothController = BluetoothController(bluetoothAdapter!!, ::updateStatus) { data ->
+        bluetoothController = BluetoothController(bluetoothAdapter!!, ::updateStatus, { data ->
             audioHandler.playAudio(data)
-        }
+        }, { text ->
+            runOnUiThread {
+                chatAdapter.addMessage("Friend: $text")
+            }
+        })
 
-        // Setup RecyclerView
+        // Setup RecyclerViews
         deviceListAdapter = DeviceListAdapter(discoveredDevices) { device ->
             bluetoothController.connectToServer(device, lifecycleScope)
         }
         devicesRecyclerView.adapter = deviceListAdapter
         devicesRecyclerView.layoutManager = LinearLayoutManager(this)
+
+        chatAdapter = ChatAdapter()
+        chatRecyclerView.adapter = chatAdapter
+        chatRecyclerView.layoutManager = LinearLayoutManager(this)
+
 
         // Start listening for connections immediately
         bluetoothController.startServer(lifecycleScope)
@@ -128,12 +140,28 @@ class MainActivity : AppCompatActivity() {
         scanButton = findViewById(R.id.scan_button)
         pttButton = findViewById(R.id.push_to_talk_button)
         devicesRecyclerView = findViewById(R.id.devices_recycler_view)
+        chatRecyclerView = findViewById(R.id.chat_recycler_view)
+        messageInput = findViewById(R.id.message_input)
+        sendButton = findViewById(R.id.send_button)
 
         scanButton.setOnClickListener {
             discoveredDevices.clear()
             deviceListAdapter.notifyDataSetChanged()
             bluetoothAdapter?.startDiscovery()
             updateStatus("Status: Scanning...")
+        }
+
+        sendButton.setOnClickListener {
+            val message = messageInput.text.toString()
+            if (message.isNotEmpty()) {
+                bluetoothController.sendMessage(
+                    BluetoothController.MessageType.TEXT_MESSAGE,
+                    message.toByteArray(),
+                    lifecycleScope
+                )
+                chatAdapter.addMessage("Me: $message")
+                messageInput.text.clear()
+            }
         }
 
         pttButton.setOnTouchListener { _, event ->
@@ -155,12 +183,14 @@ class MainActivity : AppCompatActivity() {
         statusText.text = message
         if (message == "Status: Connected") {
             pttButton.isEnabled = true
-            scanButton.isEnabled = false
+            scanButton.visibility = View.GONE
             devicesRecyclerView.visibility = View.GONE
+            chatRecyclerView.visibility = View.VISIBLE
         } else {
             pttButton.isEnabled = false
-            scanButton.isEnabled = true
+            scanButton.visibility = View.VISIBLE
             devicesRecyclerView.visibility = View.VISIBLE
+            chatRecyclerView.visibility = View.GONE
         }
     }
 
