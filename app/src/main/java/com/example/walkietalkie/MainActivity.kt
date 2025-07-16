@@ -97,9 +97,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Init Handlers
+        // MODIFIED: The AudioHandler now calls the new `sendAudioData` method on the controller.
         audioHandler = AudioHandler(lifecycleScope) { data ->
-            bluetoothController.sendData(data, lifecycleScope)
+            bluetoothController.sendAudioData(data, lifecycleScope)
         }
+        // MODIFIED: The BluetoothController now passes received audio data to the AudioHandler.
         bluetoothController = BluetoothController(bluetoothAdapter!!, ::updateStatus) { data ->
             audioHandler.playAudio(data)
         }
