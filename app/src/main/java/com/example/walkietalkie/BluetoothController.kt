@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
+import java.security.Key
 import java.util.UUID
 
 @SuppressLint("MissingPermission") // Permissions are checked in MainActivity
@@ -41,6 +42,8 @@ class BluetoothController(
 
     private val bleScanner: BluetoothLeScanner? = adapter.bluetoothLeScanner
     private var scanCallback: ScanCallback? = null
+
+    private var encryptionKey: Key? = null
 
     object MessageType {
         const val AUDIO_CHUNK: Byte = 0x01
@@ -82,6 +85,8 @@ class BluetoothController(
     private suspend fun manageConnection(btSocket: BluetoothSocket?, scope: CoroutineScope) {
         this.socket = btSocket
         withContext(Dispatchers.Main) { onStateChanged("Status: Connected") }
+        // TODO: Implement secure key exchange
+        encryptionKey = EncryptionHelper.generateKey("This is a key123") // Placeholder key
 
         streamJob = scope.launch(Dispatchers.IO) {
             val dataInputStream = DataInputStream(socket?.inputStream)
@@ -92,10 +97,11 @@ class BluetoothController(
                     if (messageLength > 0) {
                         val messagePayload = ByteArray(messageLength)
                         dataInputStream.readFully(messagePayload)
+                        val decryptedPayload = encryptionKey?.let { EncryptionHelper.decrypt(messagePayload, it) }
 
                         when (messageType) {
-                            MessageType.AUDIO_CHUNK -> onAudioDataReceived(messagePayload)
-                            MessageType.TEXT_MESSAGE -> onTextDataReceived(String(messagePayload))
+                            MessageType.AUDIO_CHUNK -> decryptedPayload?.let { onAudioDataReceived(it) }
+                            MessageType.TEXT_MESSAGE -> decryptedPayload?.let { onTextDataReceived(String(it)) }
                             MessageType.CALL_REQUEST -> onCallStateChanged("Incoming call...")
                             MessageType.CALL_TERMINATE -> onCallStateChanged("Call terminated.")
                             // TODO: Handle group messages and file transfers
@@ -112,11 +118,14 @@ class BluetoothController(
     fun sendMessage(messageType: Byte, data: ByteArray, scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
             try {
-                val dataOutputStream = DataOutputStream(socket?.outputStream)
-                dataOutputStream.writeByte(messageType.toInt())
-                dataOutputStream.writeInt(data.size)
-                dataOutputStream.write(data)
-                dataOutputStream.flush()
+                val encryptedData = encryptionKey?.let { EncryptionHelper.encrypt(data, it) }
+                encryptedData?.let {
+                    val dataOutputStream = DataOutputStream(socket?.outputStream)
+                    dataOutputStream.writeByte(messageType.toInt())
+                    dataOutputStream.writeInt(it.size)
+                    dataOutputStream.write(it)
+                    dataOutputStream.flush()
+                }
             } catch (e: IOException) {
                  withContext(Dispatchers.Main) { onStateChanged("Status: Send failed.") }
             }
@@ -175,6 +184,16 @@ class BluetoothController(
     // Placeholder for file transfer
     fun sendFile(file: java.io.File) {
         // TODO: Implement file transfer logic
+    }
+
+    // Placeholder for self-destructing messages
+    fun sendSelfDestructingMessage(message: String, timer: Long) {
+        // TODO: Implement self-destructing messages
+    }
+
+    // Placeholder for anonymous communication
+    fun sendAnonymousMessage(message: String) {
+        // TODO: Implement anonymous communication
     }
 
 
