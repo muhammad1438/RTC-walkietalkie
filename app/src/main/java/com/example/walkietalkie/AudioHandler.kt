@@ -8,6 +8,7 @@ import android.media.AudioTrack
 import android.media.MediaRecorder.AudioSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -25,17 +26,16 @@ class AudioHandler(
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
 
-    var isRecording = false
-    var isPlaying = false
+    private var recordingJob: Job? = null
+    private var playingJob: Job? = null
 
     fun startRecording() {
-        if (isRecording) return
-        isRecording = true
+        if (recordingJob?.isActive == true) return
         audioRecord = AudioRecord(AudioSource.MIC, sampleRate, channelConfigRecord, audioFormat, bufferSize)
         audioRecord?.startRecording()
-        scope.launch(Dispatchers.IO) {
+        recordingJob = scope.launch(Dispatchers.IO) {
             val buffer = ByteArray(bufferSize)
-            while (isActive && isRecording) {
+            while (isActive) {
                 val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                 if (read > 0) {
                     onDataReady(buffer.copyOf(read))
@@ -45,28 +45,24 @@ class AudioHandler(
     }
 
     fun stopRecording() {
-        if (!isRecording) return
-        isRecording = false
+        recordingJob?.cancel()
         audioRecord?.stop()
         audioRecord?.release()
         audioRecord = null
     }
 
-    fun playAudio(data: ByteArray) {
-        if (!isPlaying) {
-            startPlaying()
-        }
-        audioTrack?.write(data, 0, data.size)
-    }
-
-    private fun startPlaying() {
-        isPlaying = true
+    fun startPlaying() {
+        if (playingJob?.isActive == true) return
         audioTrack = AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, channelConfigPlay, audioFormat, bufferSize, AudioTrack.MODE_STREAM)
         audioTrack?.play()
     }
 
+    fun playAudio(data: ByteArray) {
+        audioTrack?.write(data, 0, data.size)
+    }
+
     fun stopPlaying() {
-        isPlaying = false
+        playingJob?.cancel()
         audioTrack?.stop()
         audioTrack?.release()
         audioTrack = null

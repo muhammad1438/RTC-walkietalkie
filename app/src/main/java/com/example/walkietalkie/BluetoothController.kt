@@ -28,7 +28,8 @@ class BluetoothController(
     private val onStateChanged: (String) -> Unit,
     private val onAudioDataReceived: (ByteArray) -> Unit,
     private val onTextDataReceived: (String) -> Unit,
-    private val onDeviceFound: (BluetoothDevice) -> Unit
+    private val onDeviceFound: (BluetoothDevice) -> Unit,
+    private val onCallStateChanged: (String) -> Unit
 ) {
     private val appName = "WalkieTalkie"
     private val appUuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") // Standard SerialPortService ID
@@ -44,6 +45,10 @@ class BluetoothController(
     object MessageType {
         const val AUDIO_CHUNK: Byte = 0x01
         const val TEXT_MESSAGE: Byte = 0x02
+        const val CALL_REQUEST: Byte = 0x03
+        const val CALL_TERMINATE: Byte = 0x04
+        const val GROUP_MESSAGE: Byte = 0x05
+        const val FILE_TRANSFER: Byte = 0x06
     }
 
     fun startServer(scope: CoroutineScope) {
@@ -91,6 +96,9 @@ class BluetoothController(
                         when (messageType) {
                             MessageType.AUDIO_CHUNK -> onAudioDataReceived(messagePayload)
                             MessageType.TEXT_MESSAGE -> onTextDataReceived(String(messagePayload))
+                            MessageType.CALL_REQUEST -> onCallStateChanged("Incoming call...")
+                            MessageType.CALL_TERMINATE -> onCallStateChanged("Call terminated.")
+                            // TODO: Handle group messages and file transfers
                         }
                     }
                 } catch (e: IOException) {
@@ -152,6 +160,21 @@ class BluetoothController(
     // Placeholder for connection management
     fun prioritizeConnection(device: BluetoothDevice) {
         // TODO: Implement connection prioritization logic
+    }
+
+    // Placeholder for call quality optimization
+    fun optimizeCallQuality() {
+        // TODO: Implement call quality optimization logic
+    }
+
+    // Placeholder for group communication
+    fun sendGroupMessage(message: String) {
+        // TODO: Implement group communication logic
+    }
+
+    // Placeholder for file transfer
+    fun sendFile(file: java.io.File) {
+        // TODO: Implement file transfer logic
     }
 
 

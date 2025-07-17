@@ -29,6 +29,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var scanButton: Button
     private lateinit var pttButton: Button
+    private lateinit var callButton: Button
     private lateinit var devicesRecyclerView: RecyclerView
     private lateinit var chatRecyclerView: RecyclerView
     private lateinit var messageInput: EditText
@@ -44,6 +45,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var deviceListAdapter: DeviceListAdapter
     private lateinit var chatAdapter: ChatAdapter
     private val discoveredDevices = mutableListOf<BluetoothDevice>()
+    private var isCallActive = false
 
     // --- Activity Lifecycle & Permissions ---
 
@@ -112,6 +114,23 @@ class MainActivity : AppCompatActivity() {
                 discoveredDevices.add(device)
                 deviceListAdapter.notifyDataSetChanged()
             }
+        }, { callState ->
+            runOnUiThread {
+                statusText.text = callState
+                when (callState) {
+                    "Incoming call..." -> {
+                        callButton.text = "Answer"
+                        callButton.isEnabled = true
+                    }
+                    "Call terminated." -> {
+                        isCallActive = false
+                        callButton.text = "Call"
+                        callButton.isEnabled = true
+                        audioHandler.stopRecording()
+                        audioHandler.stopPlaying()
+                    }
+                }
+            }
         })
 
         // Setup RecyclerViews
@@ -137,6 +156,7 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.status_text)
         scanButton = findViewById(R.id.scan_button)
         pttButton = findViewById(R.id.push_to_talk_button)
+        callButton = findViewById(R.id.call_button)
         devicesRecyclerView = findViewById(R.id.devices_recycler_view)
         chatRecyclerView = findViewById(R.id.chat_recycler_view)
         messageInput = findViewById(R.id.message_input)
@@ -162,6 +182,22 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        callButton.setOnClickListener {
+            if (isCallActive) {
+                bluetoothController.sendMessage(BluetoothController.MessageType.CALL_TERMINATE, byteArrayOf(), lifecycleScope)
+                isCallActive = false
+                callButton.text = "Call"
+                audioHandler.stopRecording()
+                audioHandler.stopPlaying()
+            } else {
+                bluetoothController.sendMessage(BluetoothController.MessageType.CALL_REQUEST, byteArrayOf(), lifecycleScope)
+                isCallActive = true
+                callButton.text = "End Call"
+                audioHandler.startRecording()
+                audioHandler.startPlaying()
+            }
+        }
+
         pttButton.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
@@ -181,11 +217,13 @@ class MainActivity : AppCompatActivity() {
         statusText.text = message
         if (message == "Status: Connected") {
             pttButton.isEnabled = true
+            callButton.isEnabled = true
             scanButton.visibility = View.GONE
             devicesRecyclerView.visibility = View.GONE
             chatRecyclerView.visibility = View.VISIBLE
         } else {
             pttButton.isEnabled = false
+            callButton.isEnabled = false
             scanButton.visibility = View.VISIBLE
             devicesRecyclerView.visibility = View.VISIBLE
             chatRecyclerView.visibility = View.GONE
